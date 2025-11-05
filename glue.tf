@@ -22,6 +22,10 @@ variable "glue_script_bucket" {
   default     = ""
 }
 
+locals {
+  glue_script_bucket_default = var.glue_script_bucket != "" ? var.glue_script_bucket : "${var.project_name}-${var.environment}-cleaned"
+}
+
 resource "aws_iam_role_policy_attachment" "glue_service_attach" {
   role       = aws_iam_role.glue_service_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole"
@@ -34,7 +38,7 @@ resource "aws_glue_job" "traditional_job" {
   command {
     name            = "glueetl"
     python_version  = "3"
-    script_location = "s3://${var.glue_script_bucket}/glue-scripts/transform_traditional.py"
+    script_location = "s3://${local.glue_script_bucket_default}/glue-scripts/transform_traditional.py"
   }
   max_retries = 1
 }
@@ -45,7 +49,7 @@ resource "aws_glue_job" "transaction_job" {
   command {
     name            = "glueetl"
     python_version  = "3"
-    script_location = "s3://${var.glue_script_bucket}/glue-scripts/transform_transaction.py"
+    script_location = "s3://${local.glue_script_bucket_default}/glue-scripts/transform_transaction.py"
   }
   max_retries = 1
 }
@@ -56,28 +60,31 @@ resource "aws_glue_job" "social_job" {
   command {
     name            = "glueetl"
     python_version  = "3"
-    script_location = "s3://${var.glue_script_bucket}/glue-scripts/transform_social.py"
+    script_location = "s3://${local.glue_script_bucket_default}/glue-scripts/transform_social.py"
   }
   max_retries = 1
 }
 
 // Upload Glue scripts to the scripts bucket (assumes var.glue_script_bucket already exists)
 resource "aws_s3_object" "glue_script_traditional" {
-  bucket = var.glue_script_bucket
+  bucket = local.glue_script_bucket_default
+  depends_on = [aws_s3_bucket.cleaned]
   key    = "glue-scripts/transform_traditional.py"
   source = "${path.module}/glue-scripts/transform_traditional.py"
   etag   = filemd5("${path.module}/glue-scripts/transform_traditional.py")
 }
 
 resource "aws_s3_object" "glue_script_transaction" {
-  bucket = var.glue_script_bucket
+  bucket = local.glue_script_bucket_default
+  depends_on = [aws_s3_bucket.cleaned]
   key    = "glue-scripts/transform_transaction.py"
   source = "${path.module}/glue-scripts/transform_transaction.py"
   etag   = filemd5("${path.module}/glue-scripts/transform_transaction.py")
 }
 
 resource "aws_s3_object" "glue_script_social" {
-  bucket = var.glue_script_bucket
+  bucket = local.glue_script_bucket_default
+  depends_on = [aws_s3_bucket.cleaned]
   key    = "glue-scripts/transform_social.py"
   source = "${path.module}/glue-scripts/transform_social.py"
   etag   = filemd5("${path.module}/glue-scripts/transform_social.py")

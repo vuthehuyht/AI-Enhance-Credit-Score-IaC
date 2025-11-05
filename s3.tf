@@ -5,9 +5,6 @@
 # - cleaned bucket
 # Each bucket contains three sub-prefixes: traditional/, transaction/, social/
 
-variable "project" { default = "credit-score" }
-variable "env" { default = "dev" }
-
 variable "allow_force_destroy" {
   description = "Allow force destroy of S3 buckets (dangerous - use only for dev)"
   type        = bool
@@ -21,8 +18,8 @@ variable "create_prefix_objects" {
 }
 
 locals {
-  raw_bucket     = "${var.project}-${var.env}-raw"
-  cleaned_bucket = "${var.project}-${var.env}-cleaned"
+  raw_bucket     = "${var.project_name}-${var.environment}-raw"
+  cleaned_bucket = "${var.project_name}-${var.environment}-cleaned"
 }
 
 resource "aws_s3_bucket" "raw" {
@@ -30,20 +27,23 @@ resource "aws_s3_bucket" "raw" {
   force_destroy = var.allow_force_destroy
 
   tags = {
-    Name    = local.raw_bucket
-    Project = var.project
-    Env     = var.env
+    Name        = local.raw_bucket
+    Project     = var.project_name
+    Environment = var.environment
   }
 }
 
 resource "aws_s3_bucket" "cleaned" {
+
   bucket        = local.cleaned_bucket
   force_destroy = var.allow_force_destroy
-
+  lifecycle {
+    create_before_destroy = true
+  }
   tags = {
-    Name    = local.cleaned_bucket
-    Project = var.project
-    Env     = var.env
+    Name        = local.cleaned_bucket
+    Project     = var.project_name
+    Environment = var.environment
   }
 }
 
