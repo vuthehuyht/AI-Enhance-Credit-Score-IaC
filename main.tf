@@ -14,7 +14,7 @@ terraform {
 # Configure AWS Provider
 provider "aws" {
   region = var.aws_region
-  profile = "vpbank"
+  profile = var.aws_profile
 
   default_tags {
     tags = {

@@ -6,6 +6,12 @@ variable "aws_region" {
   default     = "ap-southeast-1"
 }
 
+variable "aws_profile" {
+  description = "AWS profile for resources"
+  type        = string
+  default     = "vpbank"
+}
+
 variable "environment" {
   description = "Environment name (dev, staging, prod)"
   type        = string
