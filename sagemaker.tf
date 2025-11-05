@@ -16,15 +16,22 @@ variable "model_schedules" {
 }
 
 variable "training_image" {
-  description = "ECR image URI for training container"
+  description = "ECR image URI for training container. If empty, will use SageMaker built-in scikit-learn image"
   type        = string
   default     = ""
 }
 
 variable "inference_image" {
-  description = "ECR image URI for inference container"
+  description = "ECR image URI for inference container. If empty, will use SageMaker built-in scikit-learn image"
   type        = string
   default     = ""
+}
+
+locals {
+  # SageMaker built-in scikit-learn image for ap-southeast-1
+  # Format: <account>.dkr.ecr.<region>.amazonaws.com/sagemaker-scikit-learn:<version>
+  training_image_default   = var.training_image != "" ? var.training_image : "121021644041.dkr.ecr.ap-southeast-1.amazonaws.com/sagemaker-scikit-learn:1.2-1-cpu-py3"
+  inference_image_default  = var.inference_image != "" ? var.inference_image : "121021644041.dkr.ecr.ap-southeast-1.amazonaws.com/sagemaker-scikit-learn:1.2-1-cpu-py3"
 }
 
 variable "training_instance_type" {
@@ -45,9 +52,56 @@ variable "ml_data_bucket" {
   default     = ""
 }
 
+// IAM role for SageMaker training jobs
+resource "aws_iam_role" "sagemaker_execution_role" {
+  name = "${var.project_name}-sagemaker-execution-role-${var.environment}"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Principal = {
+          Service = "sagemaker.amazonaws.com"
+        },
+        Action = "sts:AssumeRole"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "sagemaker_full_access" {
+  role       = aws_iam_role.sagemaker_execution_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSageMakerFullAccess"
+}
+
+resource "aws_iam_role_policy" "sagemaker_s3_access" {
+  name = "${var.project_name}-sagemaker-s3-policy-${var.environment}"
+  role = aws_iam_role.sagemaker_execution_role.id
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",
+          "s3:DeleteObject",
+          "s3:ListBucket"
+        ],
+        Resource = [
+          "arn:aws:s3:::${var.project_name}-${var.environment}-cleaned",
+          "arn:aws:s3:::${var.project_name}-${var.environment}-cleaned/*",
+          "arn:aws:s3:::${var.project_name}-${var.environment}-models",
+          "arn:aws:s3:::${var.project_name}-${var.environment}-models/*"
+        ]
+      }
+    ]
+  })
+}
+
 // IAM role for Lambda that starts training
 resource "aws_iam_role" "lambda_sagemaker_start_role" {
-  name = "lambda-sagemaker-start-role-${var.model_names[0]}-${var.cleaned_bucket}"
+  name = "lambda-sagemaker-start-role-${var.project_name}-${var.environment}"
   assume_role_policy = jsonencode({
     Version   = "2012-10-17",
     Statement = [
@@ -82,10 +136,10 @@ resource "aws_iam_role_policy" "lambda_start_policy" {
         Effect = "Allow",
         Action = ["s3:GetObject", "s3:ListBucket", "s3:PutObject"],
         Resource = [
-          "arn:aws:s3:::${var.cleaned_bucket}",
-          "arn:aws:s3:::${var.cleaned_bucket}/*",
-          "arn:aws:s3:::${var.ml_data_bucket}",
-          "arn:aws:s3:::${var.ml_data_bucket}/*"
+          "arn:aws:s3:::${var.project_name}-${var.environment}-cleaned",
+          "arn:aws:s3:::${var.project_name}-${var.environment}-cleaned/*",
+          "arn:aws:s3:::${var.project_name}-${var.environment}-models",
+          "arn:aws:s3:::${var.project_name}-${var.environment}-models/*"
         ]
       }
     ]
@@ -112,11 +166,11 @@ resource "aws_lambda_function" "start_training" {
 
   environment {
     variables = {
-      TRAINING_IMAGE         = var.training_image
+      TRAINING_IMAGE         = local.training_image_default
       TRAINING_INSTANCE_TYPE = var.training_instance_type
-      CLEANED_BUCKET         = var.cleaned_bucket
-      ML_DATA_BUCKET         = var.ml_data_bucket
-      SAGEMAKER_ROLE_ARN     = ""
+      CLEANED_BUCKET         = "${var.project_name}-${var.environment}-cleaned"
+      ML_DATA_BUCKET         = "${var.project_name}-${var.environment}-models"
+      SAGEMAKER_ROLE_ARN     = aws_iam_role.sagemaker_execution_role.arn
     }
   }
   vpc_config {
@@ -201,8 +255,8 @@ resource "aws_iam_role_policy" "lambda_deploy_policy" {
         Effect = "Allow",
         Action = ["s3:GetObject", "s3:ListBucket"],
         Resource = [
-          "arn:aws:s3:::${var.ml_data_bucket}",
-          "arn:aws:s3:::${var.ml_data_bucket}/*"
+          "arn:aws:s3:::${var.project_name}-${var.environment}-models",
+          "arn:aws:s3:::${var.project_name}-${var.environment}-models/*"
         ]
       }
     ]
@@ -228,8 +282,8 @@ resource "aws_lambda_function" "deploy_model" {
 
   environment {
     variables = {
-      INFERENCE_IMAGE = var.inference_image
-      ML_DATA_BUCKET  = var.ml_data_bucket
+      INFERENCE_IMAGE = local.inference_image_default
+      ML_DATA_BUCKET  = "${var.project_name}-${var.environment}-models"
     }
   }
   vpc_config {

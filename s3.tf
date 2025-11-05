@@ -14,12 +14,13 @@ variable "allow_force_destroy" {
 variable "create_prefix_objects" {
   description = "Create zero-byte prefix objects for console visibility"
   type        = bool
-  default     = false
+  default     = true
 }
 
 locals {
   raw_bucket     = "${var.project_name}-${var.environment}-raw"
   cleaned_bucket = "${var.project_name}-${var.environment}-cleaned"
+  models_bucket  = "${var.project_name}-${var.environment}-models"
 }
 
 resource "aws_s3_bucket" "raw" {
@@ -47,13 +48,46 @@ resource "aws_s3_bucket" "cleaned" {
   }
 }
 
-# Optional: create empty folder prefixes so they show up visually in S3 UI
+# NOTE: To avoid NoSuchBucket errors when uploading scripts, always run:
+#   terraform apply -target=aws_s3_bucket.cleaned
+# Wait until the bucket is visible in AWS Console, then run full apply.
+
+resource "aws_s3_bucket" "models" {
+  bucket        = local.models_bucket
+  force_destroy = var.allow_force_destroy
+  lifecycle {
+    create_before_destroy = true
+  }
+  tags = {
+    Name        = local.models_bucket
+    Project     = var.project_name
+    Environment = var.environment
+  }
+}
+
+# Create folder prefixes for raw, cleaned, and models buckets
 # (S3 has no real folders — these create 0-byte objects with trailing slash)
+resource "aws_s3_object" "raw_prefixes" {
+  for_each = toset(["traditional/", "transaction/", "social/"])
+
+  bucket  = aws_s3_bucket.raw.bucket
+  key     = each.value
+  content = ""
+}
+
 resource "aws_s3_object" "cleaned_prefixes" {
-  count = var.create_prefix_objects ? length(["traditional/", "transaction/", "social/"]) : 0
+  for_each = toset(["traditional/", "transaction/", "social/"])
 
   bucket  = aws_s3_bucket.cleaned.bucket
-  key     = element(["traditional/", "transaction/", "social/"], count.index)
+  key     = each.value
+  content = ""
+}
+
+resource "aws_s3_object" "models_prefixes" {
+  for_each = toset(["traditional/", "transaction/", "social/"])
+
+  bucket  = aws_s3_bucket.models.bucket
+  key     = each.value
   content = ""
 }
 
@@ -69,6 +103,15 @@ resource "aws_s3_bucket_public_access_block" "raw_block" {
 
 resource "aws_s3_bucket_public_access_block" "cleaned_block" {
   bucket = aws_s3_bucket.cleaned.id
+
+  block_public_acls       = true
+  ignore_public_acls      = true
+  block_public_policy     = true
+  restrict_public_buckets = true
+}
+
+resource "aws_s3_bucket_public_access_block" "models_block" {
+  bucket = aws_s3_bucket.models.id
 
   block_public_acls       = true
   ignore_public_acls      = true
@@ -93,10 +136,22 @@ resource "aws_s3_bucket_versioning" "cleaned_versioning" {
   }
 }
 
+resource "aws_s3_bucket_versioning" "models_versioning" {
+  bucket = aws_s3_bucket.models.id
+
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
 output "raw_bucket_name" {
   value = aws_s3_bucket.raw.bucket
 }
 
 output "cleaned_bucket_name" {
   value = aws_s3_bucket.cleaned.bucket
+}
+
+output "models_bucket_name" {
+  value = aws_s3_bucket.models.bucket
 }

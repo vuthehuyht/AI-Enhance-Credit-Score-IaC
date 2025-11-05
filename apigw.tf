@@ -18,6 +18,12 @@ variable "endpoint_social" {
   default     = ""
 }
 
+locals {
+  endpoint_traditional_default = var.endpoint_traditional != "" ? var.endpoint_traditional : "${var.project_name}-${var.environment}-traditional-endpoint"
+  endpoint_transaction_default = var.endpoint_transaction != "" ? var.endpoint_transaction : "${var.project_name}-${var.environment}-transaction-endpoint"
+  endpoint_social_default      = var.endpoint_social != "" ? var.endpoint_social : "${var.project_name}-${var.environment}-social-endpoint"
+}
+
 // IAM role for aggregate lambda
 resource "aws_iam_role" "lambda_aggregate_role" {
   name = "lambda-aggregate-role"
@@ -71,9 +77,9 @@ resource "aws_lambda_function" "aggregate_inference" {
 
   environment {
     variables = {
-      ENDPOINT_TRADITIONAL = var.endpoint_traditional
-      ENDPOINT_TRANSACTION = var.endpoint_transaction
-      ENDPOINT_SOCIAL      = var.endpoint_social
+      ENDPOINT_TRADITIONAL = local.endpoint_traditional_default
+      ENDPOINT_TRANSACTION = local.endpoint_transaction_default
+      ENDPOINT_SOCIAL      = local.endpoint_social_default
     }
   }
   vpc_config {
