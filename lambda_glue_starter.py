@@ -9,13 +9,11 @@ logger.setLevel(logging.INFO)
 glue = boto3.client('glue')
 
 TRAD_JOB = os.environ.get('TRADITIONAL_JOB')
-TRANS_JOB = os.environ.get('TRANSACTION_JOB')
 SOC_JOB  = os.environ.get('SOCIAL_JOB')
 RAW_BUCKET = os.environ.get('RAW_BUCKET')
 
 PREFIX_TO_JOB = {
     'traditional/': TRAD_JOB,
-    'transaction/': TRANS_JOB,
     'social/': SOC_JOB
 }
 

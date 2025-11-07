@@ -3,7 +3,7 @@
 # Buckets:
 # - raw bucket
 # - cleaned bucket
-# Each bucket contains three sub-prefixes: traditional/, transaction/, social/
+# Each bucket contains two sub-prefixes: traditional/, social/
 
 variable "allow_force_destroy" {
   description = "Allow force destroy of S3 buckets (dangerous - use only for dev)"
@@ -68,7 +68,7 @@ resource "aws_s3_bucket" "models" {
 # Create folder prefixes for raw, cleaned, and models buckets
 # (S3 has no real folders — these create 0-byte objects with trailing slash)
 resource "aws_s3_object" "raw_prefixes" {
-  for_each = toset(["traditional/", "transaction/", "social/"])
+  for_each = toset(["traditional/", "social/"])
 
   bucket  = aws_s3_bucket.raw.bucket
   key     = each.value
@@ -76,7 +76,7 @@ resource "aws_s3_object" "raw_prefixes" {
 }
 
 resource "aws_s3_object" "cleaned_prefixes" {
-  for_each = toset(["traditional/", "transaction/", "social/"])
+  for_each = toset(["traditional/", "social/"])
 
   bucket  = aws_s3_bucket.cleaned.bucket
   key     = each.value
@@ -84,7 +84,7 @@ resource "aws_s3_object" "cleaned_prefixes" {
 }
 
 resource "aws_s3_object" "models_prefixes" {
-  for_each = toset(["traditional/", "transaction/", "social/"])
+  for_each = toset(["traditional/", "social/"])
 
   bucket  = aws_s3_bucket.models.bucket
   key     = each.value

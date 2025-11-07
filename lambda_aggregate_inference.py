@@ -9,7 +9,6 @@ logger.setLevel(logging.INFO)
 runtime = boto3.client('sagemaker-runtime')
 
 ENDPOINT_TRAD = os.environ.get('ENDPOINT_TRADITIONAL')
-ENDPOINT_TRANS = os.environ.get('ENDPOINT_TRANSACTION')
 ENDPOINT_SOC = os.environ.get('ENDPOINT_SOCIAL')
 
 # Simple demo: call each endpoint with same payload and average numeric results
@@ -47,10 +46,6 @@ def lambda_handler(event, context):
     if ENDPOINT_TRAD:
         res = invoke_endpoint(ENDPOINT_TRAD, payload)
         results.append({'model': 'traditional', 'result': res})
-
-    if ENDPOINT_TRANS:
-        res = invoke_endpoint(ENDPOINT_TRANS, payload)
-        results.append({'model': 'transaction', 'result': res})
 
     if ENDPOINT_SOC:
         res = invoke_endpoint(ENDPOINT_SOC, payload)

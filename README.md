@@ -88,35 +88,21 @@ Hệ thống tự động thu thập dữ liệu, xử lý ETL, huấn luyện m
 
        ▼
 
-┌─────────────┐```bash
-
-│ SageMaker   │  ← Huấn luyện 3 models (scikit-learn)# Copy the example variables file
-
-└──────┬──────┘cp terraform.tfvars.example terraform.tfvars
-
+┌─────────────┐
+│ SageMaker   │  ← Huấn luyện 2 models (PyTorch & scikit-learn)
+└──────┬──────┘
        │
-
-       ▼# Edit the variables file with your preferred settings
-
-┌─────────────┐# At minimum, set your AWS region and project name
-
-│  S3 Models  │  ← Lưu trữ trained models```
-
-└──────┬──────┘
-
-       │ auto-deploy### 3. Initialize and Deploy
-
        ▼
-
-┌─────────────┐```bash
-
-│ SageMaker   │  ← 3 Inference Endpoints# Initialize Terraform
-
-│ Endpoints   │terraform init
-
+┌─────────────┐
+│  S3 Models  │  ← Lưu trữ trained models
 └──────┬──────┘
-
-       │# Review the planned changes
+       │ auto-deploy
+       ▼
+┌─────────────┐
+│ SageMaker   │  ← 2 Inference Endpoints
+│ Endpoints   │
+└──────┬──────┘
+       │
 
        ▼terraform plan
 
@@ -278,35 +264,20 @@ Quá trình deploy mất khoảng **5-10 phút**.  }'
 
 ├── amplify.tf                    # AWS Amplify frontend hosting    "employment": "Positive - Stable employment",
 
-├── quicksight.tf                 # QuickSight visualization setup    "loan_ratio": "Positive - Conservative loan amount"
-
-├── config.py                     # Config cho training scripts  },
-
-├── train_traditional.py          # Script huấn luyện model traditional  "timestamp": "request-id-12345"
-
-├── train_transaction.py          # Script huấn luyện model transaction}
-
-├── train_social.py               # Script huấn luyện model social```
-
+├── quicksight.tf                 # QuickSight visualization setup
+├── config.py                     # Config cho training scripts
+├── train_traditional.py          # Script huấn luyện model traditional (bao gồm cả transaction data)
+├── train_traditional_pytorch.py  # Script huấn luyện model PyTorch DNN
+├── inference_pytorch.py          # SageMaker inference handler cho PyTorch
+├── train_social.py               # Script huấn luyện model social
 ├── lambda_glue_starter.py        # Lambda trigger Glue jobs
-
-├── lambda_start_training.py      # Lambda start SageMaker training## Infrastructure Components
-
+├── lambda_start_training.py      # Lambda start SageMaker training
 ├── lambda_deploy_model.py        # Lambda deploy SageMaker endpoints
-
-├── lambda_aggregate_inference.py # Lambda aggregate 3 model predictions### Networking
-
-└── glue-scripts/- **VPC**: 10.0.0.0/16 with DNS resolution enabled
-
-    ├── transform_traditional.py  # Glue ETL script- **Public Subnets**: 10.0.1.0/24, 10.0.2.0/24 (across 2 AZs)
-
-    ├── transform_transaction.py- **Private Subnets**: 10.0.10.0/24, 10.0.20.0/24 (across 2 AZs)
-
-    └── transform_social.py- **Internet Gateway**: For public subnet internet access
-
-```- **NAT Gateway**: For private subnet outbound internet access
-
-- **Route Tables**: Separate routing for public and private subnets
+├── lambda_aggregate_inference.py # Lambda aggregate 2 model predictions
+└── glue-scripts/
+    ├── transform_traditional.py  # Glue ETL script cho traditional + transaction data
+    └── transform_social.py       # Glue ETL script cho social data
+```
 
 ## 🎮 Hướng dẫn sử dụng
 
@@ -332,21 +303,12 @@ Cấu trúc folder trong raw bucket:- **ElastiCache Redis**: Session storage and
 
 ```- **Secrets Manager**: Database credential storage
 
-raw/- **Parameter Groups**: Optimized database configuration
-
+raw/
 ├── traditional/
-
-│   └── data.csv### ML/AI Infrastructure
-
-├── transaction/- **SageMaker Notebook**: Model development environment
-
-│   └── data.csv- **Lambda Function**: Real-time inference endpoint
-
-└── social/- **S3 Bucket**: Model artifacts and data storage
-
-    └── data.csv- **API Gateway**: Public API interface
-
-```- **IAM Roles**: Service-specific permissions
+│   └── data.csv
+└── social/
+    └── data.csv
+```
 
 
 
@@ -416,22 +378,13 @@ Response:- **Other Services**: ~$10
 
 ```json
 
-{**Total**: ~$85/month (may vary by region and usage)
-
+{
   "customer_id": "12345",
-
-  "traditional_score": 720,## Security Considerations
-
-  "transaction_score": 680,
-
-  "social_score": 750,### Network Security
-
-  "final_score": 716,- Private subnets for databases and compute resources
-
-  "risk_level": "low"- Security groups with minimal required access
-
-}- VPC isolation from internet
-
+  "traditional_score": 720,
+  "social_score": 750,
+  "final_score": 735,
+  "risk_level": "low"
+}
 ```
 
 ### Data Security
@@ -464,37 +417,24 @@ Response:- **Other Services**: ~$10
 
 - **Training Jobs**: Huấn luyện model sklearn LogisticRegression- Point-in-time recovery enabled
 
-- **Endpoints**: 3 inference endpoints (traditional, transaction, social)- Cross-AZ backup replication (if Multi-AZ enabled)
-
+### SageMaker
+- **Endpoints**: 2 inference endpoints (traditional, social)
 - **Instance**: ml.t3.medium
 
-### Configuration Backup
-
-### Lambda Functions- Terraform state stored remotely (recommended)
-
-- `glue-starter`: Trigger Glue jobs khi có file mới- Infrastructure as Code for disaster recovery
-
+### Lambda Functions
+- `glue-starter`: Trigger Glue jobs khi có file mới
 - `start-training`: Khởi động SageMaker training
+- `deploy-model`: Deploy model lên endpoint
+- `aggregate-inference`: Gọi 2 endpoints và tổng hợp kết quả
 
-- `deploy-model`: Deploy model lên endpoint## Scaling
-
-- `aggregate-inference`: Gọi 3 endpoints và tổng hợp kết quả
-
-### Horizontal Scaling
-
-### API Gateway- Auto Scaling Group for web/API tiers
-
-- **REST API**: `/predict` endpoint- ElastiCache cluster mode for Redis
-
-- **Method**: POST- Lambda automatic scaling
-
+### API Gateway
+- **REST API**: `/predict` endpoint
+- **Method**: POST
 - **Integration**: Lambda proxy
 
-### Vertical Scaling
-
-### AWS Amplify- Modify instance types in variables
-
-- **Frontend Hosting**: Web UI để tra cứu điểm- RDS storage auto-scaling enabled
+### AWS Amplify
+- **Frontend Hosting**: Web UI để tra cứu điểm
+```
 
 - **Auto Deploy**: CI/CD từ GitHub- Easy instance type upgrades
 
@@ -816,11 +756,11 @@ Chi phí hàng tháng (region ap-southeast-1):
 | S3 | $5-20 | Tùy lượng data |
 | Glue | $10-50 | $0.44/DPU-hour |
 | SageMaker Training | $20-100 | ml.t3.medium, chạy daily |
-| SageMaker Endpoints | $150-300 | 3 endpoints 24/7 |
+| SageMaker Endpoints | $100-200 | 2 endpoints 24/7 |
 | Lambda | $1-5 | Free tier 1M requests |
 | API Gateway | $3-10 | Free tier 1M calls |
 | Amplify | $0-15 | Tùy traffic |
-| **Tổng** | **$189-500** | |
+| **Tổng** | **$139-400** | |
 
 **💡 Tips tiết kiệm**:
 - Dùng SageMaker Serverless Inference thay vì real-time endpoints

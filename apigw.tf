@@ -1,13 +1,7 @@
-// API Gateway + Lambda to call three SageMaker endpoints and aggregate results
+// API Gateway + Lambda to call two SageMaker endpoints and aggregate results
 
 variable "endpoint_traditional" {
   description = "SageMaker endpoint name for traditional model"
-  type        = string
-  default     = ""
-}
-
-variable "endpoint_transaction" {
-  description = "SageMaker endpoint name for transaction model"
   type        = string
   default     = ""
 }
@@ -20,7 +14,6 @@ variable "endpoint_social" {
 
 locals {
   endpoint_traditional_default = var.endpoint_traditional != "" ? var.endpoint_traditional : "${var.project_name}-${var.environment}-traditional-endpoint"
-  endpoint_transaction_default = var.endpoint_transaction != "" ? var.endpoint_transaction : "${var.project_name}-${var.environment}-transaction-endpoint"
   endpoint_social_default      = var.endpoint_social != "" ? var.endpoint_social : "${var.project_name}-${var.environment}-social-endpoint"
 }
 
@@ -78,7 +71,6 @@ resource "aws_lambda_function" "aggregate_inference" {
   environment {
     variables = {
       ENDPOINT_TRADITIONAL = local.endpoint_traditional_default
-      ENDPOINT_TRANSACTION = local.endpoint_transaction_default
       ENDPOINT_SOCIAL      = local.endpoint_social_default
     }
   }
@@ -104,7 +96,7 @@ resource "aws_lambda_permission" "apigw_invoke" {
 // API Gateway REST API
 resource "aws_api_gateway_rest_api" "model_ensemble" {
   name        = "model-ensemble-api"
-  description = "API that aggregates predictions from 3 SageMaker models"
+  description = "API that aggregates predictions from 2 SageMaker models"
   endpoint_configuration {
     types = ["REGIONAL"]
   }

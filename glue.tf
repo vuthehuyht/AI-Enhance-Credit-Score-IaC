@@ -43,17 +43,6 @@ resource "aws_glue_job" "traditional_job" {
   max_retries = 1
 }
 
-resource "aws_glue_job" "transaction_job" {
-  name     = "${var.project_name}-${var.environment}-transform-transaction"
-  role_arn = aws_iam_role.glue_service_role.arn
-  command {
-    name            = "glueetl"
-    python_version  = "3"
-    script_location = "s3://${local.glue_script_bucket_default}/glue-scripts/transform_transaction.py"
-  }
-  max_retries = 1
-}
-
 resource "aws_glue_job" "social_job" {
   name     = "${var.project_name}-${var.environment}-transform-social"
   role_arn = aws_iam_role.glue_service_role.arn
@@ -72,14 +61,6 @@ resource "aws_s3_object" "glue_script_traditional" {
   key    = "glue-scripts/transform_traditional.py"
   source = "${path.module}/glue-scripts/transform_traditional.py"
   etag   = filemd5("${path.module}/glue-scripts/transform_traditional.py")
-}
-
-resource "aws_s3_object" "glue_script_transaction" {
-  bucket = local.glue_script_bucket_default
-  depends_on = [aws_s3_bucket.cleaned]
-  key    = "glue-scripts/transform_transaction.py"
-  source = "${path.module}/glue-scripts/transform_transaction.py"
-  etag   = filemd5("${path.module}/glue-scripts/transform_transaction.py")
 }
 
 resource "aws_s3_object" "glue_script_social" {
@@ -127,7 +108,6 @@ resource "aws_iam_role_policy" "lambda_glue_policy" {
         ],
         Resource = [
           aws_glue_job.traditional_job.arn,
-          aws_glue_job.transaction_job.arn,
           aws_glue_job.social_job.arn
         ]
       },
@@ -177,7 +157,6 @@ resource "aws_lambda_function" "glue_starter" {
   environment {
     variables = {
       TRADITIONAL_JOB = aws_glue_job.traditional_job.name
-      TRANSACTION_JOB = aws_glue_job.transaction_job.name
       SOCIAL_JOB      = aws_glue_job.social_job.name
       RAW_BUCKET      = aws_s3_bucket.raw.bucket
     }
@@ -207,12 +186,6 @@ resource "aws_s3_bucket_notification" "raw_notifications" {
     events              = ["s3:ObjectCreated:*"]
     filter_suffix       = ""
     filter_prefix       = "traditional/"
-  }
-
-  lambda_function {
-    lambda_function_arn = aws_lambda_function.glue_starter.arn
-    events              = ["s3:ObjectCreated:*"]
-    filter_prefix       = "transaction/"
   }
 
   lambda_function {

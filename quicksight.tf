@@ -66,7 +66,6 @@ resource "aws_s3_object" "quicksight_cleaned_manifest" {
       {
         URIPrefixes = [
           "s3://${aws_s3_bucket.cleaned.bucket}/traditional/",
-          "s3://${aws_s3_bucket.cleaned.bucket}/transaction/",
           "s3://${aws_s3_bucket.cleaned.bucket}/social/"
         ]
       }
@@ -88,7 +87,6 @@ resource "aws_s3_object" "quicksight_models_manifest" {
       {
         URIPrefixes = [
           "s3://${aws_s3_bucket.models.bucket}/traditional/",
-          "s3://${aws_s3_bucket.models.bucket}/transaction/",
           "s3://${aws_s3_bucket.models.bucket}/social/"
         ]
       }
@@ -126,7 +124,6 @@ output "quicksight_setup_instructions" {
 
     5. Create Datasets for each model:
        - Traditional Model Data
-       - Transaction Model Data
        - Social Model Data
 
     6. Create Dashboard with visualizations:

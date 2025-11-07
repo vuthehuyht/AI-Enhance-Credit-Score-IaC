@@ -2,7 +2,7 @@
 
 variable "model_names" {
   type    = list(string)
-  default = ["traditional", "transaction", "social"]
+  default = ["traditional", "social"]
 }
 
 variable "model_schedules" {
@@ -10,7 +10,6 @@ variable "model_schedules" {
   type        = map(string)
   default = {
     traditional = "rate(1 day)"
-    transaction = "rate(1 day)"
     social      = "rate(1 day)"
   }
 }
