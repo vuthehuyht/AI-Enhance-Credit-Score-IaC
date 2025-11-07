@@ -34,9 +34,13 @@ locals {
 }
 
 variable "training_instance_type" {
-  description = "Instance type for training (small)"
+  description = "Instance type for training (GPU-enabled for PyTorch)"
   type        = string
-  default     = "ml.t3.medium"
+  default     = "ml.g4dn.xlarge"  # NVIDIA T4 GPU, cost-effective for training
+  # Other GPU options:
+  # ml.g4dn.xlarge  - 1 GPU T4, 16GB GPU RAM (~$0.526/hour)
+  # ml.p3.2xlarge   - 1 GPU V100, 16GB GPU RAM (~$4.284/hour)
+  # ml.p3.8xlarge   - 4 GPU V100, 64GB GPU RAM (~$17.136/hour)
 }
 
 variable "cleaned_bucket" {

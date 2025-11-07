@@ -40,6 +40,9 @@ BATCH_SIZE = 18
 NUM_EPOCHS = 4000
 VALID_SPLIT = 0.1
 
+# Device configuration
+DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 
 def get_all_csv_files(bucket, prefix):
     """Lấy tất cả file CSV trong S3 bucket/prefix"""
@@ -196,9 +199,10 @@ def augment_data(df, target_col='CreditScore', augmentation_ratio=0.3):
 
 class CreditDataset(Dataset):
     """PyTorch Dataset for Credit Score data"""
-    def __init__(self, features, labels):
-        self.features = torch.tensor(features, dtype=torch.float32)
-        self.labels = torch.tensor(labels, dtype=torch.float32).unsqueeze(1)
+    def __init__(self, features, labels, device=None):
+        self.device = device if device else torch.device('cpu')
+        self.features = torch.tensor(features, dtype=torch.float32).to(self.device)
+        self.labels = torch.tensor(labels, dtype=torch.float32).unsqueeze(1).to(self.device)
 
     def __len__(self):
         return len(self.labels)
@@ -304,9 +308,17 @@ def scale_target(y_train, y_valid):
     return y_train_scaled, y_valid_scaled, scaler
 
 
-def train_model(model, train_loader, valid_loader, num_epochs, learning_rate, init_dropout_rate):
+def train_model(model, train_loader, valid_loader, num_epochs, learning_rate, init_dropout_rate, device):
     """Train the PyTorch model"""
     print("\n=== Starting Model Training ===")
+    print(f"Using device: {device}")
+    if device.type == 'cuda':
+        print(f"GPU: {torch.cuda.get_device_name(0)}")
+        print(f"CUDA Version: {torch.version.cuda}")
+        print(f"GPU Memory Available: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+
+    # Move model to device
+    model = model.to(device)
 
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
@@ -323,6 +335,7 @@ def train_model(model, train_loader, valid_loader, num_epochs, learning_rate, in
         total_train_loss = 0
 
         for features, labels in train_loader:
+            # Data is already on device from CreditDataset
             features = init_dropout(features)
 
             # Forward pass
@@ -349,6 +362,7 @@ def train_model(model, train_loader, valid_loader, num_epochs, learning_rate, in
 
         with torch.no_grad():
             for features, labels in valid_loader:
+                # Data is already on device from CreditDataset
                 outputs = model(features)
                 vloss = criterion(outputs, labels)
                 total_valid_loss += vloss.item()
@@ -365,6 +379,8 @@ def train_model(model, train_loader, valid_loader, num_epochs, learning_rate, in
             print(f'Epoch [{epoch+1}/{num_epochs}]')
             print(f'  Train Loss: {avg_train_loss:.6f} (best: {best_train_loss:.6f})')
             print(f'  Valid Loss: {avg_valid_loss:.6f} (best: {best_valid_loss:.6f})')
+            if device.type == 'cuda':
+                print(f'  GPU Memory Used: {torch.cuda.memory_allocated(0) / 1e9:.2f} GB')
 
     print("\n✓ Training Complete")
     print(f"  Best Train Loss: {best_train_loss:.6f}")
@@ -382,6 +398,17 @@ def main():
     try:
         print("="*60)
         print("PyTorch Deep Learning Credit Score Model Training")
+        print("="*60)
+        print(f"\n🔧 Device Configuration:")
+        print(f"   Device: {DEVICE}")
+        if DEVICE.type == 'cuda':
+            print(f"   GPU: {torch.cuda.get_device_name(0)}")
+            print(f"   CUDA Available: {torch.cuda.is_available()}")
+            print(f"   CUDA Version: {torch.version.cuda}")
+            print(f"   GPU Count: {torch.cuda.device_count()}")
+            print(f"   GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.2f} GB")
+        else:
+            print(f"   GPU: Not available, using CPU")
         print("="*60)
 
         # Load data from S3
@@ -412,8 +439,8 @@ def main():
         y_train_scaled, y_valid_scaled, scaler = scale_target(y_train, y_valid)
 
         # Create datasets and dataloaders
-        train_dataset = CreditDataset(X_train, y_train_scaled)
-        valid_dataset = CreditDataset(X_valid, y_valid_scaled)
+        train_dataset = CreditDataset(X_train, y_train_scaled, device=DEVICE)
+        valid_dataset = CreditDataset(X_valid, y_valid_scaled, device=DEVICE)
 
         train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
         valid_loader = DataLoader(valid_dataset, batch_size=len(X_valid), shuffle=False)
@@ -440,8 +467,12 @@ def main():
             valid_loader=valid_loader,
             num_epochs=NUM_EPOCHS,
             learning_rate=LEARNING_RATE,
-            init_dropout_rate=INIT_DROPOUT
+            init_dropout_rate=INIT_DROPOUT,
+            device=DEVICE
         )
+
+        # Move model back to CPU for saving
+        model = model.cpu()
 
         # Save model and artifacts
         print("\n=== Saving Model ===")
@@ -493,7 +524,9 @@ def main():
             'n_epochs': NUM_EPOCHS,
             'batch_size': BATCH_SIZE,
             'learning_rate': LEARNING_RATE,
-            'total_parameters': total_params
+            'total_parameters': total_params,
+            'device': str(DEVICE),
+            'cuda_available': torch.cuda.is_available()
         }
 
         metrics_path = '/tmp/metrics.json'
