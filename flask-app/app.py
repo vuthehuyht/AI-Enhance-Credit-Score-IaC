@@ -265,6 +265,45 @@ def prepare_xgboost_features(form_data):
     return features
 
 
+def prepare_traditional_features(customer_data):
+    """
+    Prepare features for traditional model from customer database record
+    This should match the features used during training
+    """
+    # Extract stored features from customer data
+    # TODO: Adjust based on your actual traditional model training features
+    features = customer_data.get('traditional_features', [])
+
+    if not features:
+        logger.warning('No traditional features found in customer data')
+        # Generate from basic data if available
+        income = float(customer_data.get('income', 0))
+        savings = float(customer_data.get('savings', 0))
+        debt = float(customer_data.get('debt', 0))
+
+        # Add more features as needed to match training data
+        features = [income, savings, debt]  # Placeholder
+
+    return features
+
+
+def prepare_social_features(customer_data):
+    """
+    Prepare features for social model from customer database record
+    This should match the features used during training
+    """
+    # Extract stored social media features from customer data
+    # TODO: Adjust based on your actual social model training features
+    features = customer_data.get('social_features', [])
+
+    if not features:
+        logger.warning('No social features found in customer data')
+        # Generate placeholder features
+        features = [0] * 50  # Placeholder - adjust size as needed
+
+    return features
+
+
 def save_customer_to_db(form_data, prediction_result):
     """Save new customer and prediction to database"""
     if not customer_table:
@@ -281,7 +320,11 @@ def save_customer_to_db(form_data, prediction_result):
             'last_prediction': datetime.utcnow().isoformat(),
             'credit_score': prediction_result['predicted_score'],
             'credit_group': prediction_result['predicted_group'],
-            'prediction_history': [prediction_result]
+            'prediction_history': [prediction_result],
+            # Store basic financial info for future predictions
+            'income': form_data.get('income'),
+            'savings': form_data.get('savings'),
+            'debt': form_data.get('debt')
         }
 
         customer_table.put_item(Item=item)
@@ -475,11 +518,18 @@ def predict_existing_customer():
     """
     Predict credit score for EXISTING customer using traditional + social models
 
+    This endpoint:
+    1. Retrieves customer data from DynamoDB
+    2. Extracts stored features (traditional_features, social_features)
+    3. Runs predictions through both traditional and social models
+    4. Aggregates scores and returns result
+
     Request body:
     {
-        "full_name": "Nguyen Van A",
-        "national_id": "001234567890",
-        "email": "nguyenvana@example.com",
+        "national_id": "001234567890"
+        # OR
+        "email": "nguyenvana@example.com"
+        # OR
         "phone_number": "0912345678"
     }
 
@@ -526,42 +576,40 @@ def predict_existing_customer():
 
         logger.info(f'Processing EXISTING customer: {customer_data.get("national_id")}')
 
-        # TODO: Get actual features from customer data or additional input
-        # For now, use placeholder - in production, extract from customer history
-        # You may need to pass features in request or retrieve from database
-
+        # Retrieve all customer data from database and prepare features
         results = []
 
-        # Traditional model prediction
-        # Note: You need to determine how to get features for existing customers
-        # Option 1: Pass features in request
-        # Option 2: Retrieve from customer history in database
-        # Option 3: Use stored feature vectors
+        # Traditional model prediction using stored customer data
+        try:
+            traditional_features = prepare_traditional_features(customer_data)
+            if traditional_features and len(traditional_features) > 0:
+                trad_result = predict_score('traditional', traditional_features)
+                results.append({
+                    'model': 'traditional',
+                    'score': trad_result['score']
+                })
+                logger.info(f'Traditional model score: {trad_result["score"]}')
+        except Exception as e:
+            logger.exception('Traditional model prediction failed')
 
-        if 'features' in data:
-            # If features provided in request
-            if 'traditional' in data['features']:
-                try:
-                    trad_result = predict_score('traditional', data['features']['traditional'])
-                    results.append({
-                        'model': 'traditional',
-                        'score': trad_result['score']
-                    })
-                except Exception as e:
-                    logger.exception('Traditional model failed')
+        # Social model prediction using stored customer data
+        try:
+            social_features = prepare_social_features(customer_data)
+            if social_features and len(social_features) > 0:
+                social_result = predict_score('social', social_features)
+                results.append({
+                    'model': 'social',
+                    'score': social_result['score']
+                })
+                logger.info(f'Social model score: {social_result["score"]}')
+        except Exception as e:
+            logger.exception('Social model prediction failed')
 
-            if 'social' in data['features']:
-                try:
-                    social_result = predict_score('social', data['features']['social'])
-                    results.append({
-                        'model': 'social',
-                        'score': social_result['score']
-                    })
-                except Exception as e:
-                    logger.exception('Social model failed')
-        else:
-            # If no features provided, return last known score from database
+        # Check if we got any valid predictions
+        if not results:
+            # Fallback to last known score if no models succeeded
             if 'credit_score' in customer_data:
+                logger.warning('No new predictions available, returning cached score')
                 return jsonify({
                     'predicted_score': float(customer_data['credit_score']),
                     'predicted_group': customer_data.get('credit_group', get_fico_group(customer_data['credit_score'])),
@@ -572,10 +620,14 @@ def predict_existing_customer():
                         'phone_number': customer_data.get('phone_number')
                     },
                     'last_prediction': customer_data.get('last_prediction'),
-                    'source': 'database_cache'
+                    'source': 'database_cache',
+                    'warning': 'Could not generate new prediction, returning cached score'
                 })
             else:
-                return jsonify({'error': 'No prediction available. Features required for new prediction.'}), 400
+                return jsonify({
+                    'error': 'No prediction available. Customer data incomplete.',
+                    'details': 'Missing feature data for model inference'
+                }), 400
 
         # Aggregate scores
         scores = [r['score'] for r in results if 'score' in r]

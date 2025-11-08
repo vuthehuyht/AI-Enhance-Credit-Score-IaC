@@ -1,0 +1,105 @@
+### Flask API Tests for Credit Score Prediction
+
+@baseUrl = http://localhost:5000
+
+### 1. Health Check
+GET {{baseUrl}}/health
+
+### 2. Predict New Customer (XGBoost model)
+POST {{baseUrl}}/api/v1/predict-new-customer
+Content-Type: application/json
+
+{
+  "full_name": "Nguyen Van A",
+  "national_id": "001234567890",
+  "email": "nguyenvana@example.com",
+  "phone_number": "0912345678",
+  "income": 50000000,
+  "savings": 10000000,
+  "debt": 5000000,
+  "cat_dependents": "Yes",
+  "cat_mortgage": "No",
+  "cat_savings_account": "Yes",
+  "cat_credit_card": "Yes"
+}
+
+### 3. Predict Existing Customer by National ID (Traditional + Social models)
+# This will retrieve all customer data from DB and run through both models
+POST {{baseUrl}}/api/v1/predict-existing-customer
+Content-Type: application/json
+
+{
+  "national_id": "001234567890"
+}
+
+### 4. Predict Existing Customer by Email
+POST {{baseUrl}}/api/v1/predict-existing-customer
+Content-Type: application/json
+
+{
+  "email": "nguyenvana@example.com"
+}
+
+### 5. Predict Existing Customer by Phone
+POST {{baseUrl}}/api/v1/predict-existing-customer
+Content-Type: application/json
+
+{
+  "phone_number": "0912345678"
+}
+
+### 6. Search Customer by National ID (GET)
+GET {{baseUrl}}/api/v1/search?national_id=001234567890
+
+### 7. Search Customer by Email (POST)
+POST {{baseUrl}}/api/v1/search
+Content-Type: application/json
+
+{
+  "email": "nguyenvana@example.com"
+}
+
+### 8. Search Customer by Phone (POST)
+POST {{baseUrl}}/api/v1/search
+Content-Type: application/json
+
+{
+  "phone_number": "0912345678"
+}
+
+### 9. Reload Models (Clear Cache)
+POST {{baseUrl}}/models/reload
+
+### 10. Test Error: Missing Required Fields
+POST {{baseUrl}}/api/v1/predict-new-customer
+Content-Type: application/json
+
+{
+  "full_name": "Nguyen Van B"
+}
+
+### 11. Test Error: Customer Not Found
+POST {{baseUrl}}/api/v1/predict-existing-customer
+Content-Type: application/json
+
+{
+  "national_id": "999999999999"
+}
+
+### 12. Test Error: Duplicate Customer
+POST {{baseUrl}}/api/v1/predict-new-customer
+Content-Type: application/json
+
+{
+  "full_name": "Nguyen Van A",
+  "national_id": "001234567890",
+  "email": "nguyenvana@example.com",
+  "phone_number": "0912345678",
+  "income": 50000000,
+  "savings": 10000000,
+  "debt": 5000000,
+  "cat_dependents": "Yes",
+  "cat_mortgage": "No",
+  "cat_savings_account": "Yes",
+  "cat_credit_card": "Yes"
+}
