@@ -1,7 +1,8 @@
 """
 Flask API for Credit Score Prediction
+- New customers: Use XGBoost model with form data
 - Existing customers: Use traditional + social models with aggregation
-- New customers: Use XGBoost model
+- Search: Customer lookup by identifiers
 """
 from flask import Flask, request, jsonify
 import boto3
@@ -40,6 +41,21 @@ try:
 except Exception as e:
     logger.warning(f'Failed to connect to DynamoDB: {e}')
     customer_table = None
+
+
+# FICO Score Groups mapping
+def get_fico_group(score):
+    """Map credit score to FICO group"""
+    if score >= 800:
+        return "Exceptional"
+    elif score >= 740:
+        return "Very Good"
+    elif score >= 670:
+        return "Good"
+    elif score >= 580:
+        return "Fair"
+    else:
+        return "Poor"
 
 
 class CreditScoreRegressor(nn.Module):
@@ -128,12 +144,12 @@ def load_model_from_s3(model_name):
             }
 
         elif model_name == 'social':
-            # Download sklearn model
+            # Download social model (sklearn-based)
             model_key = f'{model_name}/model.pkl'
             model_path = f'{MODEL_CACHE_DIR}/{model_name}_model.pkl'
             s3.download_file(ML_DATA_BUCKET, model_key, model_path)
 
-            # Load sklearn model
+            # Load social model
             model = joblib.load(model_path)
 
             # Get input size
@@ -146,10 +162,10 @@ def load_model_from_s3(model_name):
                 'model': model,
                 'scaler': scaler,
                 'input_size': input_size,
-                'model_type': 'sklearn'
+                'model_type': 'social'
             }
 
-        else:  # traditional PyTorch model
+        else:  # traditional model (PyTorch-based)
             # Download model file
             model_key = f'{model_name}/model.pt'
             model_path = f'{MODEL_CACHE_DIR}/{model_name}_model.pt'
@@ -174,7 +190,7 @@ def load_model_from_s3(model_name):
                 'model': model,
                 'scaler': scaler,
                 'input_size': model_package['input_size'],
-                'model_type': 'pytorch'
+                'model_type': 'traditional'
             }
 
         logger.info(f'✓ Model {model_name} loaded successfully')
@@ -185,42 +201,114 @@ def load_model_from_s3(model_name):
         raise
 
 
-def check_customer_exists(customer_id):
-    """Check if customer exists in database"""
+def check_customer_exists(national_id=None, email=None, phone_number=None):
+    """Check if customer exists in database by national_id, email or phone"""
     if not customer_table:
         logger.warning('DynamoDB table not available, treating as new customer')
-        return False
+        return False, None
 
     try:
-        response = customer_table.get_item(Key={'customer_id': customer_id})
-        exists = 'Item' in response
-        logger.info(f'Customer {customer_id} exists: {exists}')
-        return exists
+        # Primary lookup by national_id
+        if national_id:
+            response = customer_table.get_item(Key={'national_id': national_id})
+            if 'Item' in response:
+                logger.info(f'Customer found by national_id: {national_id}')
+                return True, response['Item']
+
+        # Fallback: scan by email or phone (less efficient, consider GSI in production)
+        if email or phone_number:
+            scan_filter = {}
+            if email:
+                scan_filter['email'] = {'AttributeValueList': [email], 'ComparisonOperator': 'EQ'}
+            if phone_number:
+                scan_filter['phone_number'] = {'AttributeValueList': [phone_number], 'ComparisonOperator': 'EQ'}
+
+            response = customer_table.scan(ScanFilter=scan_filter, Limit=1)
+            if response.get('Items'):
+                logger.info(f'Customer found by email/phone')
+                return True, response['Items'][0]
+
+        return False, None
     except Exception as e:
-        logger.exception(f'Error checking customer {customer_id}: {e}')
-        return False
+        logger.exception(f'Error checking customer: {e}')
+        return False, None
 
 
-def save_prediction_to_db(customer_id, prediction_data):
-    """Save prediction result to database"""
+def prepare_xgboost_features(form_data):
+    """Prepare features for XGBoost model from form data"""
+    # Extract numerical features
+    income = float(form_data.get('income', 0))
+    savings = float(form_data.get('savings', 0))
+    debt = float(form_data.get('debt', 0))
+
+    # Extract categorical features (Yes/No -> 1/0)
+    dependents = 1 if form_data.get('cat_dependents', 'No').lower() == 'yes' else 0
+    mortgage = 1 if form_data.get('cat_mortgage', 'No').lower() == 'yes' else 0
+    savings_account = 1 if form_data.get('cat_savings_account', 'No').lower() == 'yes' else 0
+    credit_card = 1 if form_data.get('cat_credit_card', 'No').lower() == 'yes' else 0
+
+    # Create feature array (adjust order based on your training data)
+    features = [
+        income,
+        savings,
+        debt,
+        dependents,
+        mortgage,
+        savings_account,
+        credit_card,
+        # Derived features
+        savings / income if income > 0 else 0,  # Savings ratio
+        debt / income if income > 0 else 0,     # Debt-to-income ratio
+        income - debt                            # Net worth
+    ]
+
+    return features
+
+
+def save_customer_to_db(form_data, prediction_result):
+    """Save new customer and prediction to database"""
     if not customer_table:
         logger.warning('DynamoDB table not available, skipping save')
         return
 
     try:
         item = {
-            'customer_id': customer_id,
-            'prediction_timestamp': datetime.utcnow().isoformat(),
-            'credit_score': prediction_data.get('aggregated_score') or prediction_data.get('score'),
-            'models_used': prediction_data.get('models_used', []),
-            'prediction_type': prediction_data.get('prediction_type'),
-            'raw_predictions': prediction_data.get('models', [])
+            'national_id': form_data['national_id'],
+            'full_name': form_data.get('full_name', ''),
+            'email': form_data.get('email', ''),
+            'phone_number': form_data.get('phone_number', ''),
+            'created_at': datetime.utcnow().isoformat(),
+            'last_prediction': datetime.utcnow().isoformat(),
+            'credit_score': prediction_result['predicted_score'],
+            'credit_group': prediction_result['predicted_group'],
+            'prediction_history': [prediction_result]
         }
 
         customer_table.put_item(Item=item)
-        logger.info(f'Saved prediction for customer {customer_id}')
+        logger.info(f'Saved new customer: {form_data["national_id"]}')
     except Exception as e:
-        logger.exception(f'Error saving prediction for {customer_id}: {e}')
+        logger.exception(f'Error saving customer: {e}')
+
+
+def update_customer_prediction(customer_data, prediction_result):
+    """Update existing customer with new prediction"""
+    if not customer_table:
+        return
+
+    try:
+        # Update customer record with new prediction
+        customer_table.update_item(
+            Key={'national_id': customer_data['national_id']},
+            UpdateExpression='SET last_prediction = :ts, credit_score = :score, credit_group = :group',
+            ExpressionAttributeValues={
+                ':ts': datetime.utcnow().isoformat(),
+                ':score': prediction_result['predicted_score'],
+                ':group': prediction_result['predicted_group']
+            }
+        )
+        logger.info(f'Updated customer: {customer_data["national_id"]}')
+    except Exception as e:
+        logger.exception(f'Error updating customer: {e}')
 
 
 def predict_score(model_name, input_features):
@@ -250,15 +338,18 @@ def predict_score(model_name, input_features):
             dmatrix = xgb.DMatrix(features_array)
             prediction_scaled = model.predict(dmatrix)[0]
 
-        elif model_type == 'sklearn':
-            # Sklearn prediction
+        elif model_type == 'social':
+            # Social model (sklearn-based) prediction
             prediction_scaled = model.predict(features_array)[0]
 
-        else:  # pytorch
-            # PyTorch prediction
+        elif model_type == 'traditional':
+            # Traditional model (PyTorch-based) prediction
             with torch.no_grad():
                 features_tensor = torch.tensor(features_array, dtype=torch.float32)
                 prediction_scaled = model(features_tensor).item()
+
+        else:
+            raise ValueError(f"Unknown model type: {model_type}")
 
         # Inverse transform to get actual credit score
         prediction = scaler.inverse_transform([[prediction_scaled]])[0][0]
@@ -286,42 +377,37 @@ def health_check():
     })
 
 
-@app.route('/api/v1/predict', methods=['POST'])
-def predict():
+@app.route('/api/v1/predict-new-customer', methods=['POST'])
+def predict_new_customer():
     """
-    Predict credit score with customer type routing
-    - Existing customers: traditional + social models (aggregated)
-    - New customers: XGBoost model only
+    Predict credit score for NEW customer using XGBoost model
 
     Request body:
     {
-        "customer_id": "CUS123456",
-        "features": {
-            "traditional": [list of features for traditional model],
-            "social": [list of features for social model],
-            "xgboost": [list of features for xgboost model]
-        }
+        "full_name": "Nguyen Van A",
+        "national_id": "001234567890",
+        "email": "nguyenvana@example.com",
+        "phone_number": "0912345678",
+        "income": 50000000,
+        "savings": 10000000,
+        "debt": 5000000,
+        "cat_dependents": "Yes",
+        "cat_mortgage": "No",
+        "cat_savings_account": "Yes",
+        "cat_credit_card": "Yes"
     }
 
-    Response for existing customer:
+    Response:
     {
-        "customer_id": "CUS123456",
-        "customer_type": "existing",
-        "aggregated_score": 735.4,
-        "models": [
-            {"model": "traditional", "score": 750.5},
-            {"model": "social", "score": 720.3}
-        ],
-        "prediction_type": "multi_model_aggregate"
-    }
-
-    Response for new customer:
-    {
-        "customer_id": "CUS999999",
-        "customer_type": "new",
-        "score": 680.2,
-        "model": "xgboost",
-        "prediction_type": "new_customer_xgboost"
+        "predicted_score": 720.5,
+        "predicted_group": "Good",
+        "customer_info": {
+            "full_name": "Nguyen Van A",
+            "national_id": "001234567890",
+            "email": "nguyenvana@example.com",
+            "phone_number": "0912345678"
+        },
+        "timestamp": "2025-11-08T10:30:00Z"
     }
     """
     try:
@@ -330,197 +416,281 @@ def predict():
         if not data:
             return jsonify({'error': 'Missing request body'}), 400
 
-        # Extract customer_id and features
-        customer_id = data.get('customer_id')
-        features_data = data.get('features', {})
+        # Validate required fields
+        required_fields = ['full_name', 'national_id', 'email', 'phone_number',
+                          'income', 'savings', 'debt']
+        missing_fields = [f for f in required_fields if f not in data]
+        if missing_fields:
+            return jsonify({'error': f'Missing required fields: {", ".join(missing_fields)}'}), 400
 
-        if not customer_id:
-            return jsonify({'error': 'Missing "customer_id" in request'}), 400
+        # Check if customer already exists
+        exists, existing_customer = check_customer_exists(
+            national_id=data['national_id'],
+            email=data['email'],
+            phone_number=data['phone_number']
+        )
 
-        if not features_data:
-            return jsonify({'error': 'Missing "features" in request'}), 400
-
-        # Check if customer exists in database
-        is_existing_customer = check_customer_exists(customer_id)
-
-        if is_existing_customer:
-            # Existing customer: Use traditional + social models
-            logger.info(f'Processing EXISTING customer: {customer_id}')
-
-            results = []
-
-            # Traditional model
-            if 'traditional' in features_data:
-                try:
-                    trad_result = predict_score('traditional', features_data['traditional'])
-                    results.append({
-                        'model': 'traditional',
-                        'score': trad_result['score'],
-                        'score_scaled': trad_result['score_scaled']
-                    })
-                except Exception as e:
-                    logger.exception('Traditional model inference failed')
-                    results.append({'model': 'traditional', 'error': str(e)})
-
-            # Social model
-            if 'social' in features_data:
-                try:
-                    social_result = predict_score('social', features_data['social'])
-                    results.append({
-                        'model': 'social',
-                        'score': social_result['score'],
-                        'score_scaled': social_result['score_scaled']
-                    })
-                except Exception as e:
-                    logger.exception('Social model inference failed')
-                    results.append({'model': 'social', 'error': str(e)})
-
-            # Aggregate scores
-            scores = [
-                r['score'] for r in results
-                if 'score' in r and 'error' not in r
-            ]
-
-            if not scores:
-                return jsonify({
-                    'error': 'All model predictions failed',
-                    'models': results
-                }), 500
-
-            agg_score = sum(scores) / len(scores)
-
-            response = {
-                'customer_id': customer_id,
-                'customer_type': 'existing',
-                'aggregated_score': float(agg_score),
-                'models': results,
-                'num_models_used': len(scores),
-                'prediction_type': 'multi_model_aggregate',
-                'timestamp': datetime.utcnow().isoformat()
-            }
-
-            # Save to database
-            save_prediction_to_db(customer_id, {
-                'aggregated_score': agg_score,
-                'models': results,
-                'models_used': [r['model'] for r in results if 'score' in r],
-                'prediction_type': 'multi_model_aggregate'
-            })
-
-            return jsonify(response)
-
-        else:
-            # New customer: Use XGBoost only
-            logger.info(f'Processing NEW customer: {customer_id}')
-
-            if 'xgboost' not in features_data:
-                return jsonify({
-                    'error': 'Missing "xgboost" features for new customer prediction'
-                }), 400
-
-            try:
-                xgb_result = predict_score('xgboost', features_data['xgboost'])
-
-                response = {
-                    'customer_id': customer_id,
-                    'customer_type': 'new',
-                    'score': xgb_result['score'],
-                    'score_scaled': xgb_result['score_scaled'],
-                    'model': 'xgboost',
-                    'prediction_type': 'new_customer_xgboost',
-                    'timestamp': datetime.utcnow().isoformat()
+        if exists:
+            return jsonify({
+                'error': 'Customer already exists. Please use the existing customer prediction endpoint.',
+                'existing_customer': {
+                    'national_id': existing_customer.get('national_id'),
+                    'full_name': existing_customer.get('full_name')
                 }
+            }), 400
 
-                # Save to database
-                save_prediction_to_db(customer_id, {
-                    'score': xgb_result['score'],
-                    'models_used': ['xgboost'],
-                    'prediction_type': 'new_customer_xgboost'
-                })
+        # Prepare features for XGBoost
+        features = prepare_xgboost_features(data)
 
-                return jsonify(response)
+        # Run XGBoost prediction
+        xgb_result = predict_score('xgboost', features)
+        predicted_score = xgb_result['score']
+        predicted_group = get_fico_group(predicted_score)
 
-            except Exception as e:
-                logger.exception('XGBoost model inference failed')
-                return jsonify({
-                    'error': f'XGBoost prediction failed: {str(e)}'
-                }), 500
+        # Prepare response
+        result = {
+            'predicted_score': predicted_score,
+            'predicted_group': predicted_group,
+            'customer_info': {
+                'full_name': data['full_name'],
+                'national_id': data['national_id'],
+                'email': data['email'],
+                'phone_number': data['phone_number']
+            },
+            'timestamp': datetime.utcnow().isoformat()
+        }
+
+        # Save customer to database
+        save_customer_to_db(data, result)
+
+        return jsonify(result)
 
     except Exception as e:
-        logger.exception('Prediction request failed')
+        logger.exception('New customer prediction failed')
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/v1/predict-existing-customer', methods=['POST'])
+def predict_existing_customer():
+    """
+    Predict credit score for EXISTING customer using traditional + social models
+
+    Request body:
+    {
+        "full_name": "Nguyen Van A",
+        "national_id": "001234567890",
+        "email": "nguyenvana@example.com",
+        "phone_number": "0912345678"
+    }
+
+    Response:
+    {
+        "predicted_score": 735.4,
+        "predicted_group": "Very Good",
+        "customer_info": {
+            "full_name": "Nguyen Van A",
+            "national_id": "001234567890",
+            "email": "nguyenvana@example.com",
+            "phone_number": "0912345678"
+        },
+        "models_used": ["traditional", "social"],
+        "model_scores": {
+            "traditional": 750.5,
+            "social": 720.3
+        },
+        "timestamp": "2025-11-08T10:30:00Z"
+    }
+    """
+    try:
+        data = request.get_json()
+
+        if not data:
+            return jsonify({'error': 'Missing request body'}), 400
+
+        # Validate at least one identifier
+        if not any([data.get('national_id'), data.get('email'), data.get('phone_number')]):
+            return jsonify({'error': 'At least one identifier required: national_id, email, or phone_number'}), 400
+
+        # Check if customer exists
+        exists, customer_data = check_customer_exists(
+            national_id=data.get('national_id'),
+            email=data.get('email'),
+            phone_number=data.get('phone_number')
+        )
+
+        if not exists:
+            return jsonify({
+                'error': 'Customer not found. Please use the new customer prediction endpoint.',
+                'suggestion': 'POST /api/v1/predict-new-customer'
+            }), 404
+
+        logger.info(f'Processing EXISTING customer: {customer_data.get("national_id")}')
+
+        # TODO: Get actual features from customer data or additional input
+        # For now, use placeholder - in production, extract from customer history
+        # You may need to pass features in request or retrieve from database
+
+        results = []
+
+        # Traditional model prediction
+        # Note: You need to determine how to get features for existing customers
+        # Option 1: Pass features in request
+        # Option 2: Retrieve from customer history in database
+        # Option 3: Use stored feature vectors
+
+        if 'features' in data:
+            # If features provided in request
+            if 'traditional' in data['features']:
+                try:
+                    trad_result = predict_score('traditional', data['features']['traditional'])
+                    results.append({
+                        'model': 'traditional',
+                        'score': trad_result['score']
+                    })
+                except Exception as e:
+                    logger.exception('Traditional model failed')
+
+            if 'social' in data['features']:
+                try:
+                    social_result = predict_score('social', data['features']['social'])
+                    results.append({
+                        'model': 'social',
+                        'score': social_result['score']
+                    })
+                except Exception as e:
+                    logger.exception('Social model failed')
+        else:
+            # If no features provided, return last known score from database
+            if 'credit_score' in customer_data:
+                return jsonify({
+                    'predicted_score': float(customer_data['credit_score']),
+                    'predicted_group': customer_data.get('credit_group', get_fico_group(customer_data['credit_score'])),
+                    'customer_info': {
+                        'full_name': customer_data.get('full_name'),
+                        'national_id': customer_data.get('national_id'),
+                        'email': customer_data.get('email'),
+                        'phone_number': customer_data.get('phone_number')
+                    },
+                    'last_prediction': customer_data.get('last_prediction'),
+                    'source': 'database_cache'
+                })
+            else:
+                return jsonify({'error': 'No prediction available. Features required for new prediction.'}), 400
+
+        # Aggregate scores
+        scores = [r['score'] for r in results if 'score' in r]
+
+        if not scores:
+            return jsonify({'error': 'No valid predictions from models'}), 500
+
+        aggregated_score = sum(scores) / len(scores)
+        predicted_group = get_fico_group(aggregated_score)
+
+        # Prepare response
+        result = {
+            'predicted_score': aggregated_score,
+            'predicted_group': predicted_group,
+            'customer_info': {
+                'full_name': customer_data.get('full_name') or data.get('full_name'),
+                'national_id': customer_data.get('national_id'),
+                'email': customer_data.get('email'),
+                'phone_number': customer_data.get('phone_number')
+            },
+            'models_used': [r['model'] for r in results],
+            'model_scores': {r['model']: r['score'] for r in results},
+            'timestamp': datetime.utcnow().isoformat()
+        }
+
+        # Update customer record
+        update_customer_prediction(customer_data, result)
+
+        return jsonify(result)
+
+    except Exception as e:
+        logger.exception('Existing customer prediction failed')
         return jsonify({'error': str(e)}), 500
 
 
 @app.route('/api/v1/search', methods=['GET', 'POST'])
 def search():
     """
-    Search customer credit score history from database
+    Search customer by identifiers
 
-    GET: /api/v1/search?customer_id=CUS123456
-    POST: {"customer_id": "CUS123456"}
+    GET: /api/v1/search?national_id=001234567890
+    GET: /api/v1/search?email=test@example.com
+    GET: /api/v1/search?phone_number=0912345678
+
+    POST body:
+    {
+        "full_name": "Nguyen Van A",
+        "national_id": "001234567890",
+        "email": "nguyenvana@example.com",
+        "phone_number": "0912345678"
+    }
 
     Response:
     {
-        "customer_id": "CUS123456",
         "found": true,
-        "predictions": [
-            {
-                "timestamp": "2025-11-08T10:30:00Z",
-                "credit_score": 735.4,
-                "prediction_type": "multi_model_aggregate",
-                "models_used": ["traditional", "social"]
-            }
-        ]
+        "customer": {
+            "full_name": "Nguyen Van A",
+            "national_id": "001234567890",
+            "email": "nguyenvana@example.com",
+            "phone_number": "0912345678",
+            "credit_score": 735.4,
+            "credit_group": "Very Good",
+            "last_prediction": "2025-11-08T10:30:00Z",
+            "created_at": "2025-11-01T08:00:00Z"
+        }
     }
     """
     try:
-        if not customer_table:
-            return jsonify({
-                'error': 'Database not available'
-            }), 503
-
-        # Get customer_id from query param or body
+        # Get search parameters
         if request.method == 'GET':
-            customer_id = request.args.get('customer_id')
+            national_id = request.args.get('national_id')
+            email = request.args.get('email')
+            phone_number = request.args.get('phone_number')
         else:
             data = request.get_json()
-            customer_id = data.get('customer_id') if data else None
+            if not data:
+                return jsonify({'error': 'Missing request body'}), 400
+            national_id = data.get('national_id')
+            email = data.get('email')
+            phone_number = data.get('phone_number')
 
-        if not customer_id:
-            return jsonify({'error': 'Missing "customer_id" parameter'}), 400
+        # Validate at least one identifier provided
+        if not any([national_id, email, phone_number]):
+            return jsonify({'error': 'At least one identifier required: national_id, email, or phone_number'}), 400
 
-        # Query DynamoDB
-        try:
-            response = customer_table.get_item(Key={'customer_id': customer_id})
+        # Search customer
+        exists, customer_data = check_customer_exists(
+            national_id=national_id,
+            email=email,
+            phone_number=phone_number
+        )
 
-            if 'Item' not in response:
-                return jsonify({
-                    'customer_id': customer_id,
-                    'found': False,
-                    'message': 'Customer not found in database'
-                })
-
-            item = response['Item']
-
+        if not exists:
             return jsonify({
-                'customer_id': customer_id,
-                'found': True,
-                'latest_prediction': {
-                    'timestamp': item.get('prediction_timestamp'),
-                    'credit_score': float(item.get('credit_score', 0)),
-                    'prediction_type': item.get('prediction_type'),
-                    'models_used': item.get('models_used', []),
-                    'raw_predictions': item.get('raw_predictions', [])
-                }
+                'found': False,
+                'message': 'Customer not found in database'
             })
 
-        except Exception as e:
-            logger.exception(f'Database query failed for {customer_id}')
-            return jsonify({
-                'error': f'Database query failed: {str(e)}'
-            }), 500
+        # Return customer data
+        return jsonify({
+            'found': True,
+            'customer': {
+                'full_name': customer_data.get('full_name'),
+                'national_id': customer_data.get('national_id'),
+                'email': customer_data.get('email'),
+                'phone_number': customer_data.get('phone_number'),
+                'credit_score': float(customer_data.get('credit_score', 0)) if customer_data.get('credit_score') else None,
+                'credit_group': customer_data.get('credit_group'),
+                'last_prediction': customer_data.get('last_prediction'),
+                'created_at': customer_data.get('created_at')
+            }
+        })
 
     except Exception as e:
+
         logger.exception('Search request failed')
         return jsonify({'error': str(e)}), 500
 

@@ -3,11 +3,35 @@
 resource "aws_dynamodb_table" "customers" {
   name           = "${var.project_name}-${var.environment}-customers"
   billing_mode   = "PAY_PER_REQUEST"  # On-demand pricing
-  hash_key       = "customer_id"
+  hash_key       = "national_id"
 
   attribute {
-    name = "customer_id"
+    name = "national_id"
     type = "S"
+  }
+
+  attribute {
+    name = "email"
+    type = "S"
+  }
+
+  attribute {
+    name = "phone_number"
+    type = "S"
+  }
+
+  # Global Secondary Index for email lookup
+  global_secondary_index {
+    name            = "EmailIndex"
+    hash_key        = "email"
+    projection_type = "ALL"
+  }
+
+  # Global Secondary Index for phone lookup
+  global_secondary_index {
+    name            = "PhoneIndex"
+    hash_key        = "phone_number"
+    projection_type = "ALL"
   }
 
   # Enable point-in-time recovery
