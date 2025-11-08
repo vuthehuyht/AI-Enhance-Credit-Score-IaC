@@ -1,0 +1,10 @@
+# Flask Application Requirements
+Flask==3.0.0
+flask==2.3.2
+boto3==1.26.137
+torch==2.0.1
+scikit-learn==1.2.2
+xgboost==2.0.3
+numpy==1.24.3
+joblib==1.2.0
+gunicorn==21.2.0

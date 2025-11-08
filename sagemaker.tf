@@ -2,7 +2,7 @@
 
 variable "model_names" {
   type    = list(string)
-  default = ["traditional", "social"]
+  default = ["traditional", "social", "xgboost"]
 }
 
 variable "model_schedules" {
@@ -11,6 +11,7 @@ variable "model_schedules" {
   default = {
     traditional = "rate(1 day)"
     social      = "rate(1 day)"
+    xgboost     = "rate(1 day)"
   }
 }
 
