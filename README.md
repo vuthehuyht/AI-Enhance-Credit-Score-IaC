@@ -1,49 +1,52 @@
-# VPBank AI Credit Score - Infrastructure as Code
+# 🏦 VPBank AI Credit Score - Infrastructure as Code
 
-## Y Tuong Du An
+> **Hạ tầng AWS tự động hóa cho hệ thống chấm điểm tín dụng thông minh sử dụng AI/ML**
 
-### Van de
-He thong cham diem tin dung truyen thong chi dua vao du lieu tai chinh → Thieu chinh xac cho khach hang moi.
+## 🎯 Ý Tưởng Dự Án
 
-### Giai phap  
-He thong AI cham diem tin dung da chieu ket hop 3 nguon du lieu:
+### Vấn đề
+Hệ thống chấm điểm tín dụng truyền thống chỉ dựa vào dữ liệu tài chính → **Thiếu chính xác** cho khách hàng mới hoặc không có lịch sử tín dụng.
 
-1. Traditional Data: Thong tin tai chinh (thu nhap, tiet kiem, no)
-2. Transaction Data: Lich su giao dich ngan hang
-3. Social Data: Hanh vi mang xa hoi
+### Giải pháp  
+**Hệ thống AI chấm điểm tín dụng đa chiều** kết hợp 3 nguồn dữ liệu:
 
-### Ket qua
-- Du doan chinh xac hon voi 3 models ML chay song song
-- Tu dong phan loai FICO score groups  
-- API thoi gian thuc cho ung dung ngan hang
-- Dashboard truc quan cho quan ly
+1. 💰 **Traditional Data**: Thông tin tài chính (thu nhập, tiết kiệm, nợ)
+2. 💳 **Transaction Data**: Lịch sử giao dịch ngân hàng
+3. 👥 **Social Data**: Hành vi mạng xã hội
+
+### Kết quả
+- ✅ Dự đoán chính xác hơn với **3 models ML** chạy song song
+- ✅ Tự động phân loại FICO score groups  
+- ✅ API thời gian thực cho ứng dụng ngân hàng
+- ✅ Dashboard trực quan cho quản lý
 
 ---
 
-## Kien Truc Tong Quan
+## 🏗️ Kiến Trúc Tổng Quan
 
 ```
 DATA PIPELINE
 =============
 
-1. DATA COLLECTION
+1️⃣ DATA COLLECTION
    CSV Upload → S3 Raw Bucket
 
-2. DATA PROCESSING (AWS Glue ETL)
+2️⃣ DATA PROCESSING (AWS Glue ETL)
    S3 Raw → Glue Jobs → S3 Cleaned
 
-3. MODEL TRAINING (SageMaker)
+3️⃣ MODEL TRAINING (SageMaker)
    S3 Cleaned → SageMaker Training Jobs
-   ├── XGBoost Model (khach hang moi)
+   ├── XGBoost Model (khách hàng mới)
    ├── Traditional Model (PyTorch DNN)  
-   └── Social Model (Sklearn ExtraTrees)
+   ├── Social Model (Sklearn ExtraTrees)
+   └── Summary Model (Aggregate traditional + social)
    
    → S3 Models Bucket
 
-4. INFERENCE API (Flask on EC2)
+4️⃣ INFERENCE API (Flask on EC2)
    Flask API Server (EC2 t3.medium)
    • New Customer → XGBoost Model
-   • Existing Customer → Traditional + Social
+   • Existing Customer → Traditional + Social → Summary Model
    
    Load Models from S3 → Cache in Memory
    Query/Update Customer Data → DynamoDB
@@ -53,9 +56,9 @@ DATA PIPELINE
 
 ---
 
-## Workflow Chi Tiet
+## 📋 Workflow Chi Tiết
 
-### Scenario 1: Khach Hang Moi
+### Scenario 1: Khách Hàng Mới
 ```
 POST /api/v1/predict-new-customer
 {
@@ -67,16 +70,16 @@ POST /api/v1/predict-new-customer
 }
 
 Flask API:
-1. Check DynamoDB → Customer chua ton tai
-2. Extract 10 features tu form
-3. Load XGBoost model tu S3
+1. Check DynamoDB → Customer chưa tồn tại
+2. Extract 10 features từ form
+3. Load XGBoost model từ S3
 4. Predict → Score: 720
 5. Map to FICO Group → "Good"
-6. Save vao DynamoDB
+6. Save vào DynamoDB
 7. Return response
 ```
 
-### Scenario 2: Khach Hang Hien Huu
+### Scenario 2: Khách Hàng Hiện Hữu
 ```
 POST /api/v1/predict-existing-customer
 {
@@ -84,14 +87,16 @@ POST /api/v1/predict-existing-customer
 }
 
 Flask API:
-1. Query DynamoDB → Lay toan bo data
+1. Query DynamoDB → Lấy toàn bộ data
 2. Extract traditional_features
 3. Extract social_features
 4. Load Traditional model (PyTorch) → Score A
 5. Load Social model (Sklearn) → Score B
-6. Aggregate: (A + B) / 2 = Final Score
+6. Load Summary model → Aggregate (A, B) → Final Score
 7. Update DynamoDB
 8. Return response
+
+Flow: Traditional + Social → Summary Model → Final Score
 ```
 
 ---
@@ -165,7 +170,7 @@ curl -X POST http://$FLASK_IP:5000/api/v1/predict-new-customer \
 
 ---
 
-## Project Structure
+## 📦 Project Structure
 
 ```
 .
@@ -190,7 +195,7 @@ curl -X POST http://$FLASK_IP:5000/api/v1/predict-new-customer \
 
 ---
 
-## Cost Optimization
+## 💰 Cost Optimization
 
 ### Development (~$30/month)
 ```hcl
@@ -215,7 +220,7 @@ SAVINGS: 82%
 
 ---
 
-## Documentation
+## 📚 Documentation
 
 - **API Guide**: `flask-app/API_GUIDE.md`
 - **Architecture**: `flask-app/ARCHITECTURE.md`
@@ -224,7 +229,7 @@ SAVINGS: 82%
 
 ---
 
-## Monitoring
+## 📊 Monitoring
 
 ```bash
 # Flask logs
@@ -239,7 +244,7 @@ aws logs tail /aws/lambda/glue-starter --follow
 
 ---
 
-## Cleanup
+## 🧹 Cleanup
 
 ```bash
 terraform destroy
@@ -251,21 +256,21 @@ aws s3 rm s3://vpbank-ai-credit-score-dev-models --recursive
 
 ---
 
-## Roadmap
+## 🗺️ Roadmap
 
-### Phase 1: MVP (Completed)
+### Phase 1: MVP (Hoàn thành ✅)
 - [x] Infrastructure setup
 - [x] 3 ML models pipeline
 - [x] Flask API
 - [x] DynamoDB storage
 
-### Phase 2: Production (In Progress)
+### Phase 2: Production (Đang triển khai 🚧)
 - [ ] HTTPS/SSL
 - [ ] Auto Scaling
 - [ ] Load Balancer
 - [ ] CI/CD pipeline
 
-### Phase 3: Advanced (Planned)
+### Phase 3: Advanced (Dự kiến 📅)
 - [ ] Real-time streaming
 - [ ] A/B testing
 - [ ] Auto retraining

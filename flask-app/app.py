@@ -143,26 +143,27 @@ def load_model_from_s3(model_name):
                 'model_type': 'xgboost'
             }
 
-        elif model_name == 'social':
-            # Download social model (sklearn-based)
+        elif model_name in ['social', 'summary']:
+            # Download social/summary model (sklearn-based)
             model_key = f'{model_name}/model.pkl'
             model_path = f'{MODEL_CACHE_DIR}/{model_name}_model.pkl'
             s3.download_file(ML_DATA_BUCKET, model_key, model_path)
 
-            # Load social model
+            # Load sklearn model
             model = joblib.load(model_path)
 
             # Get input size
             if hasattr(model, 'n_features_in_'):
                 input_size = model.n_features_in_
             else:
-                input_size = 50  # Default for social
+                # Default sizes
+                input_size = 50 if model_name == 'social' else 2  # summary takes 2 scores
 
             MODELS_CACHE[model_name] = {
                 'model': model,
                 'scaler': scaler,
                 'input_size': input_size,
-                'model_type': 'social'
+                'model_type': 'social' if model_name == 'social' else 'summary'
             }
 
         else:  # traditional model (PyTorch-based)
@@ -381,8 +382,8 @@ def predict_score(model_name, input_features):
             dmatrix = xgb.DMatrix(features_array)
             prediction_scaled = model.predict(dmatrix)[0]
 
-        elif model_type == 'social':
-            # Social model (sklearn-based) prediction
+        elif model_type in ['social', 'summary']:
+            # Social/Summary model (sklearn-based) prediction
             prediction_scaled = model.predict(features_array)[0]
 
         elif model_type == 'traditional':
@@ -578,6 +579,7 @@ def predict_existing_customer():
 
         # Retrieve all customer data from database and prepare features
         results = []
+        model_scores = {}
 
         # Traditional model prediction using stored customer data
         try:
@@ -588,6 +590,7 @@ def predict_existing_customer():
                     'model': 'traditional',
                     'score': trad_result['score']
                 })
+                model_scores['traditional'] = trad_result['score']
                 logger.info(f'Traditional model score: {trad_result["score"]}')
         except Exception as e:
             logger.exception('Traditional model prediction failed')
@@ -601,15 +604,16 @@ def predict_existing_customer():
                     'model': 'social',
                     'score': social_result['score']
                 })
+                model_scores['social'] = social_result['score']
                 logger.info(f'Social model score: {social_result["score"]}')
         except Exception as e:
             logger.exception('Social model prediction failed')
 
-        # Check if we got any valid predictions
-        if not results:
-            # Fallback to last known score if no models succeeded
+        # Check if we got both model predictions
+        if len(results) < 2:
+            # Fallback to last known score if not enough models succeeded
             if 'credit_score' in customer_data:
-                logger.warning('No new predictions available, returning cached score')
+                logger.warning('Not enough model predictions, returning cached score')
                 return jsonify({
                     'predicted_score': float(customer_data['credit_score']),
                     'predicted_group': customer_data.get('credit_group', get_fico_group(customer_data['credit_score'])),
@@ -629,13 +633,18 @@ def predict_existing_customer():
                     'details': 'Missing feature data for model inference'
                 }), 400
 
-        # Aggregate scores
-        scores = [r['score'] for r in results if 'score' in r]
-
-        if not scores:
-            return jsonify({'error': 'No valid predictions from models'}), 500
-
-        aggregated_score = sum(scores) / len(scores)
+        # Use Summary model to aggregate traditional and social scores
+        try:
+            # Prepare input for summary model: [traditional_score, social_score]
+            summary_input = [model_scores['traditional'], model_scores['social']]
+            summary_result = predict_score('summary', summary_input)
+            aggregated_score = summary_result['score']
+            logger.info(f'Summary model final score: {aggregated_score}')
+        except Exception as e:
+            logger.exception('Summary model failed, using simple average')
+            # Fallback to simple average if summary model fails
+            scores = [r['score'] for r in results if 'score' in r]
+            aggregated_score = sum(scores) / len(scores)
         predicted_group = get_fico_group(aggregated_score)
 
         # Prepare response
@@ -648,8 +657,9 @@ def predict_existing_customer():
                 'email': customer_data.get('email'),
                 'phone_number': customer_data.get('phone_number')
             },
-            'models_used': [r['model'] for r in results],
-            'model_scores': {r['model']: r['score'] for r in results},
+            'models_used': ['traditional', 'social', 'summary'],
+            'model_scores': model_scores,
+            'final_aggregation': 'summary_model',
             'timestamp': datetime.utcnow().isoformat()
         }
 
